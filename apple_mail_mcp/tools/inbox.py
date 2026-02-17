@@ -358,6 +358,89 @@ def list_mailboxes(
 
 @mcp.tool()
 @inject_preferences
+def list_account_inboxes() -> str:
+    """
+    List all email accounts with their detected inbox mailbox name.
+
+    For each account, probes common inbox names ("INBOX", "Inbox", and localized
+    variants) to find which one actually exists, and reports it.
+
+    Use this to discover the exact account names and inbox mailbox names needed
+    for the INBOX_MAILBOX_NAMES configuration.
+
+    Returns:
+        For each account: account name, detected inbox mailbox name, and email addresses.
+    """
+
+    script = '''
+    tell application "Mail"
+        set outputText to "ACCOUNT INBOX CONFIGURATION" & return
+        set outputText to outputText & "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" & return & return
+
+        set allAccounts to every account
+        set accountIndex to 0
+
+        repeat with anAccount in allAccounts
+            set accountIndex to accountIndex + 1
+            set accountName to name of anAccount
+
+            -- Get email addresses for this account
+            set emailAddrs to ""
+            try
+                set addrList to email addresses of anAccount
+                set AppleScript's text item delimiters to ", "
+                set emailAddrs to addrList as string
+                set AppleScript's text item delimiters to ""
+            end try
+
+            set outputText to outputText & "Account: " & accountName & return
+            if emailAddrs is not "" then
+                set outputText to outputText & "  Email(s): " & emailAddrs & return
+            end if
+
+            -- Probe common inbox names to find the real one
+            set inboxFound to false
+            set candidateNames to {"INBOX", "Inbox", "inbox", "Boîte de réception", "Posteingang", "Entrada", "Posta in arrivo", "Inkomend", "Indbakke", "Innboks", "Inkorg"}
+
+            repeat with candidateName in candidateNames
+                if not inboxFound then
+                    try
+                        set testMailbox to mailbox candidateName of anAccount
+                        set outputText to outputText & "  Inbox mailbox: " & candidateName & return
+                        set inboxFound to true
+                    end try
+                end if
+            end repeat
+
+            if not inboxFound then
+                -- Fallback: list all top-level mailbox names so the user can identify
+                set outputText to outputText & "  Inbox mailbox: [not detected]" & return
+                try
+                    set accountMailboxes to every mailbox of anAccount
+                    set outputText to outputText & "  Available mailboxes:" & return
+                    repeat with aMailbox in accountMailboxes
+                        set outputText to outputText & "    - " & name of aMailbox & return
+                    end repeat
+                end try
+            end if
+
+            set outputText to outputText & return
+        end repeat
+
+        set outputText to outputText & "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" & return
+        set outputText to outputText & "Use these account names as keys in INBOX_MAILBOX_NAMES." & return
+        set outputText to outputText & "Example: {\\"iCloud\\": \\"Boîte de réception\\"}" & return
+
+        return outputText
+    end tell
+    '''
+
+    result = run_applescript(script)
+    return result
+
+
+@mcp.tool()
+@inject_preferences
 def get_inbox_overview() -> str:
     """
     Get a comprehensive overview of your email inbox status across all accounts.
