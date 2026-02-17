@@ -4,7 +4,11 @@
       "command": "/path/to/apple-mail-mcp/venv/bin/python3",
       "args": [
         "/path/to/apple-mail-mcp/apple_mail_mcp.py"
-      ]
+      ],
+      "env": {
+        "INBOX_MAILBOX_NAME": "INBOX",
+        "INBOX_MAILBOX_NAMES": "{\"iCloud\": \"Boîte de réception\"}"
+      }
     }
   }
 }

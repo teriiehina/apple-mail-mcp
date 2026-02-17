@@ -3,7 +3,11 @@
 from typing import Optional, List, Dict, Any
 
 from apple_mail_mcp.server import mcp
-from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, LOWERCASE_HANDLER
+from apple_mail_mcp.core import (
+    inject_preferences, escape_applescript, run_applescript, LOWERCASE_HANDLER,
+    get_inbox_name, inbox_name_handler_script, inbox_mailbox_script,
+    mailbox_resolve_script,
+)
 
 
 @mcp.tool()
@@ -13,7 +17,7 @@ def get_email_with_content(
     subject_keyword: str,
     max_results: int = 5,
     max_content_length: int = 300,
-    mailbox: str = "INBOX"
+    mailbox: Optional[str] = None
 ) -> str:
     """
     Search for emails by subject keyword and return with full content preview.
@@ -23,16 +27,19 @@ def get_email_with_content(
         subject_keyword: Keyword to search for in email subjects
         max_results: Maximum number of matching emails to return (default: 5)
         max_content_length: Maximum content length in characters (default: 300, 0 = unlimited)
-        mailbox: Mailbox to search (default: "INBOX", use "All" for all mailboxes)
+        mailbox: Mailbox to search (default: configured inbox name, use "All" for all mailboxes)
 
     Returns:
         Detailed email information including content preview
     """
+    if mailbox is None:
+        mailbox = get_inbox_name(account)
 
     # Escape user inputs for AppleScript
     escaped_keyword = escape_applescript(subject_keyword)
     escaped_account = escape_applescript(account)
     escaped_mailbox = escape_applescript(mailbox)
+    inbox_name = get_inbox_name(account)
 
     # Build mailbox selection logic
     if mailbox == "All":
@@ -43,15 +50,7 @@ def get_email_with_content(
         search_location = "all mailboxes"
     else:
         mailbox_script = f'''
-            try
-                set searchMailbox to mailbox "{escaped_mailbox}" of targetAccount
-            on error
-                if "{escaped_mailbox}" is "INBOX" then
-                    set searchMailbox to mailbox "Inbox" of targetAccount
-                else
-                    error "Mailbox not found: {escaped_mailbox}"
-                end if
-            end try
+            {mailbox_resolve_script("searchMailbox", escaped_mailbox, "targetAccount", inbox_name)}
             set searchMailboxes to {{searchMailbox}}
         '''
         search_location = mailbox
@@ -147,7 +146,7 @@ def get_email_with_content(
 @inject_preferences
 def search_emails(
     account: str,
-    mailbox: str = "INBOX",
+    mailbox: Optional[str] = None,
     subject_keyword: Optional[str] = None,
     sender: Optional[str] = None,
     has_attachments: Optional[bool] = None,
@@ -162,7 +161,7 @@ def search_emails(
 
     Args:
         account: Account name to search in (e.g., "Gmail", "Work")
-        mailbox: Mailbox to search (default: "INBOX", use "All" for all mailboxes, or specific folder name)
+        mailbox: Mailbox to search (default: configured inbox name, use "All" for all mailboxes, or specific folder name)
         subject_keyword: Optional keyword to search in subject
         sender: Optional sender email or name to filter by
         has_attachments: Optional filter for emails with attachments (True/False/None)
@@ -175,6 +174,8 @@ def search_emails(
     Returns:
         Formatted list of matching emails with all requested details
     """
+    if mailbox is None:
+        mailbox = get_inbox_name(account)
 
     # Escape user inputs for AppleScript
     escaped_account = escape_applescript(account)
@@ -228,6 +229,7 @@ def search_emails(
     ''' if include_content else ''
 
     # Build mailbox selection logic
+    inbox_name = get_inbox_name(account)
     if mailbox == "All":
         mailbox_script = '''
             set allMailboxes to every mailbox of targetAccount
@@ -235,15 +237,7 @@ def search_emails(
         '''
     else:
         mailbox_script = f'''
-            try
-                set searchMailbox to mailbox "{escaped_mailbox}" of targetAccount
-            on error
-                if "{escaped_mailbox}" is "INBOX" then
-                    set searchMailbox to mailbox "Inbox" of targetAccount
-                else
-                    error "Mailbox not found: {escaped_mailbox}"
-                end if
-            end try
+            {mailbox_resolve_script("searchMailbox", escaped_mailbox, "targetAccount", inbox_name)}
             set searchMailboxes to {{searchMailbox}}
         '''
 
@@ -335,7 +329,7 @@ def search_by_sender(
     max_results: int = 20,
     include_content: bool = True,
     max_content_length: int = 500,
-    mailbox: str = "INBOX"
+    mailbox: Optional[str] = None
 ) -> str:
     """
     Find all emails from a specific sender across one or all accounts.
@@ -348,11 +342,13 @@ def search_by_sender(
         max_results: Maximum number of emails to return (default: 20)
         include_content: Whether to include email content preview (default: True)
         max_content_length: Maximum length of content preview (default: 500)
-        mailbox: Mailbox to search (default: "INBOX", use "All" for all mailboxes)
+        mailbox: Mailbox to search (default: configured inbox name, use "All" for all mailboxes)
 
     Returns:
         Formatted list of emails from the sender, sorted by date (newest first)
     """
+    if mailbox is None:
+        mailbox = get_inbox_name(account) if account else "INBOX"
 
     # Build date filter if days_back > 0
     date_filter_script = ""
@@ -407,17 +403,10 @@ def search_by_sender(
                 end repeat
         '''
     else:
+        use_inbox_handler = mailbox == get_inbox_name(account) if account else True
         mailbox_loop_start = f'''
                 -- Fast path: only search the target mailbox
-                try
-                    set aMailbox to mailbox "{escaped_mailbox}" of anAccount
-                on error
-                    if "{escaped_mailbox}" is "INBOX" then
-                        set aMailbox to mailbox "Inbox" of anAccount
-                    else
-                        error "Mailbox not found: {escaped_mailbox}"
-                    end if
-                end try
+                {inbox_mailbox_script("aMailbox", "anAccount") if use_inbox_handler else mailbox_resolve_script("aMailbox", escaped_mailbox, "anAccount", get_inbox_name(account) if account else "INBOX")}
                 set mailboxName to name of aMailbox
                 if true then
         '''
@@ -448,6 +437,7 @@ def search_by_sender(
         '''
 
     script = f'''
+    {inbox_name_handler_script()}
     {LOWERCASE_HANDLER}
 
     tell application "Mail"
@@ -527,7 +517,7 @@ def search_by_sender(
 def search_email_content(
     account: str,
     search_text: str,
-    mailbox: str = "INBOX",
+    mailbox: Optional[str] = None,
     search_subject: bool = True,
     search_body: bool = True,
     max_results: int = 10,
@@ -540,7 +530,7 @@ def search_email_content(
     Args:
         account: Account name to search in
         search_text: Text to search for in email content
-        mailbox: Mailbox to search (default: "INBOX")
+        mailbox: Mailbox to search (default: configured inbox name)
         search_subject: Also search in subject line (default: True)
         search_body: Search in email body (default: True)
         max_results: Maximum results to return (default: 10, keep low as this is slow)
@@ -549,6 +539,8 @@ def search_email_content(
     Returns:
         Emails where the search text appears in body and/or subject
     """
+    if mailbox is None:
+        mailbox = get_inbox_name(account)
     escaped_search = escape_applescript(search_text).lower()
     escaped_account = escape_applescript(account)
     escaped_mailbox = escape_applescript(mailbox)
@@ -569,15 +561,7 @@ def search_email_content(
         set resultCount to 0
         try
             set targetAccount to account "{escaped_account}"
-            try
-                set targetMailbox to mailbox "{escaped_mailbox}" of targetAccount
-            on error
-                if "{escaped_mailbox}" is "INBOX" then
-                    set targetMailbox to mailbox "Inbox" of targetAccount
-                else
-                    error "Mailbox not found: {escaped_mailbox}"
-                end if
-            end try
+            {mailbox_resolve_script("targetMailbox", escaped_mailbox, "targetAccount", get_inbox_name(account))}
             set mailboxMessages to every message of targetMailbox
             repeat with aMessage in mailboxMessages
                 if resultCount >= {max_results} then exit repeat
@@ -695,6 +679,7 @@ def get_newsletters(
         date_check = " and messageDate > cutoffDate"
 
     script = f'''
+    {inbox_name_handler_script()}
     {LOWERCASE_HANDLER}
 
     tell application "Mail"
@@ -708,10 +693,11 @@ def get_newsletters(
             {account_filter_start}
             try
                 set accountMailboxes to every mailbox of anAccount
+                set inboxNameForAccount to my getInboxName(accountName)
                 repeat with aMailbox in accountMailboxes
                     try
                         set mailboxName to name of aMailbox
-                        if mailboxName is "INBOX" or mailboxName is "Inbox" then
+                        if mailboxName is inboxNameForAccount or mailboxName is "INBOX" or mailboxName is "Inbox" then
                             set mailboxMessages to every message of aMailbox
                             repeat with aMessage in mailboxMessages
                                 if resultCount >= {max_results} then exit repeat
@@ -771,7 +757,7 @@ def get_recent_from_sender(
     max_results: int = 15,
     include_content: bool = True,
     max_content_length: int = 400,
-    mailbox: str = "INBOX"
+    mailbox: Optional[str] = None
 ) -> str:
     """
     Get recent emails from a specific sender with simple, human-friendly time filters.
@@ -788,11 +774,13 @@ def get_recent_from_sender(
         max_results: Maximum emails to return (default: 15)
         include_content: Include content preview (default: True)
         max_content_length: Max preview length (default: 400)
-        mailbox: Mailbox to search (default: "INBOX", use "All" for all mailboxes)
+        mailbox: Mailbox to search (default: configured inbox name, use "All" for all mailboxes)
 
     Returns:
         Recent emails from the specified sender within the time range
     """
+    if mailbox is None:
+        mailbox = get_inbox_name(account) if account else "INBOX"
     time_ranges = {"today": 1, "yesterday": 2, "week": 7, "month": 30, "all": 0}
     days_back = time_ranges.get(time_range.lower(), 7)
     is_yesterday = time_range.lower() == "yesterday"
@@ -852,17 +840,10 @@ def get_recent_from_sender(
                 end repeat
         '''
     else:
+        use_inbox_handler = mailbox == get_inbox_name(account) if account else True
         mailbox_loop_start = f'''
                 -- Fast path: only search the target mailbox
-                try
-                    set aMailbox to mailbox "{escaped_mailbox}" of anAccount
-                on error
-                    if "{escaped_mailbox}" is "INBOX" then
-                        set aMailbox to mailbox "Inbox" of anAccount
-                    else
-                        error "Mailbox not found: {escaped_mailbox}"
-                    end if
-                end try
+                {inbox_mailbox_script("aMailbox", "anAccount") if use_inbox_handler else mailbox_resolve_script("aMailbox", escaped_mailbox, "anAccount", get_inbox_name(account) if account else "INBOX")}
                 set mailboxName to name of aMailbox
                 if true then
         '''
@@ -893,6 +874,7 @@ def get_recent_from_sender(
         '''
 
     script = f'''
+    {inbox_name_handler_script()}
     {LOWERCASE_HANDLER}
 
     tell application "Mail"
@@ -955,7 +937,7 @@ def get_recent_from_sender(
 def get_email_thread(
     account: str,
     subject_keyword: str,
-    mailbox: str = "INBOX",
+    mailbox: Optional[str] = None,
     max_messages: int = 50
 ) -> str:
     """
@@ -964,12 +946,14 @@ def get_email_thread(
     Args:
         account: Account name (e.g., "Gmail", "Work")
         subject_keyword: Keyword to identify the thread (e.g., "Re: Project Update")
-        mailbox: Mailbox to search in (default: "INBOX", use "All" for all mailboxes)
+        mailbox: Mailbox to search in (default: configured inbox name, use "All" for all mailboxes)
         max_messages: Maximum number of thread messages to return (default: 50)
 
     Returns:
         Formatted thread view with all related messages sorted by date
     """
+    if mailbox is None:
+        mailbox = get_inbox_name(account)
 
     # Escape user inputs for AppleScript
     escaped_account = escape_applescript(account)
@@ -982,23 +966,13 @@ def get_email_thread(
         cleaned_keyword = cleaned_keyword.replace(prefix, '').strip()
     escaped_keyword = escape_applescript(cleaned_keyword)
 
+    inbox_name = get_inbox_name(account)
     mailbox_script = f'''
-        try
-            set searchMailbox to mailbox "{escaped_mailbox}" of targetAccount
-        on error
-            if "{escaped_mailbox}" is "INBOX" then
-                set searchMailbox to mailbox "Inbox" of targetAccount
-            else if "{escaped_mailbox}" is "All" then
-                set searchMailboxes to every mailbox of targetAccount
-                set useAllMailboxes to true
-            else
-                error "Mailbox not found: {escaped_mailbox}"
-            end if
-        end try
-
-        if "{escaped_mailbox}" is not "All" then
+        if "{escaped_mailbox}" is "All" then
+            set searchMailboxes to every mailbox of targetAccount
+        else
+            {mailbox_resolve_script("searchMailbox", escaped_mailbox, "targetAccount", inbox_name)}
             set searchMailboxes to {{searchMailbox}}
-            set useAllMailboxes to false
         end if
     '''
 
@@ -1177,6 +1151,7 @@ def search_all_accounts(
         '''
 
     script = f'''
+        {inbox_name_handler_script()}
         {LOWERCASE_HANDLER}
 
         on replaceText(theText, searchStr, replaceStr)
@@ -1195,19 +1170,19 @@ def search_all_accounts(
             repeat with acct in allAccounts
                 set acctName to name of acct
 
-                -- Find INBOX mailbox
+                -- Find INBOX mailbox with per-account name resolution
                 set inboxMailbox to missing value
+                set inboxNameForAcct to my getInboxName(acctName)
                 try
-                    set inboxMailbox to mailbox "INBOX" of acct
+                    set inboxMailbox to mailbox inboxNameForAcct of acct
                 on error
-                    -- Try to find inbox by checking mailboxes
-                    repeat with mb in mailboxes of acct
-                        set mbName to name of mb
-                        if mbName is "INBOX" or mbName is "Inbox" then
-                            set inboxMailbox to mb
-                            exit repeat
-                        end if
-                    end repeat
+                    try
+                        set inboxMailbox to mailbox "INBOX" of acct
+                    on error
+                        try
+                            set inboxMailbox to mailbox "Inbox" of acct
+                        end try
+                    end try
                 end try
 
                 if inboxMailbox is not missing value then

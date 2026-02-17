@@ -3,7 +3,11 @@
 from typing import Optional
 
 from apple_mail_mcp.server import mcp
-from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, inbox_mailbox_script
+from apple_mail_mcp.core import (
+    inject_preferences, escape_applescript, run_applescript,
+    inbox_mailbox_script, inbox_name_handler_script, get_inbox_name,
+    mailbox_resolve_script,
+)
 
 
 @mcp.tool()
@@ -66,6 +70,8 @@ def reply_to_email(
     safe_bcc = escape_applescript(bcc) if bcc else ""
 
     script = f'''
+    {inbox_name_handler_script()}
+
     tell application "Mail"
         set outputText to "SENDING REPLY" & return & return
 
@@ -272,7 +278,7 @@ def forward_email(
     subject_keyword: str,
     to: str,
     message: Optional[str] = None,
-    mailbox: str = "INBOX",
+    mailbox: Optional[str] = None,
     cc: Optional[str] = None,
     bcc: Optional[str] = None
 ) -> str:
@@ -284,13 +290,15 @@ def forward_email(
         subject_keyword: Keyword to search for in email subjects
         to: Recipient email address(es), comma-separated for multiple
         message: Optional message to add before forwarded content
-        mailbox: Mailbox to search in (default: "INBOX")
+        mailbox: Mailbox to search in (default: configured inbox name)
         cc: Optional CC recipients, comma-separated for multiple
         bcc: Optional BCC recipients, comma-separated for multiple
 
     Returns:
         Confirmation message with details of forwarded email
     """
+    if mailbox is None:
+        mailbox = get_inbox_name(account)
 
     # Escape all user inputs for AppleScript
     safe_account = escape_applescript(account)
@@ -338,15 +346,7 @@ def forward_email(
         try
             set targetAccount to account "{safe_account}"
             -- Try to get mailbox
-            try
-                set targetMailbox to mailbox "{safe_mailbox}" of targetAccount
-            on error
-                if "{safe_mailbox}" is "INBOX" then
-                    set targetMailbox to mailbox "Inbox" of targetAccount
-                else
-                    error "Mailbox not found: {safe_mailbox}"
-                end if
-            end try
+            {mailbox_resolve_script("targetMailbox", safe_mailbox, "targetAccount", get_inbox_name(account))}
 
             set mailboxMessages to every message of targetMailbox
             set foundMessage to missing value

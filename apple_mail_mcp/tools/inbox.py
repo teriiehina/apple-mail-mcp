@@ -3,7 +3,11 @@
 from typing import Optional, List, Dict, Any
 
 from apple_mail_mcp.server import mcp
-from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, inbox_mailbox_script
+from apple_mail_mcp.core import (
+    inject_preferences, escape_applescript, run_applescript,
+    inbox_mailbox_script, inbox_name_handler_script, get_inbox_name,
+    mailbox_resolve_script,
+)
 
 
 @mcp.tool()
@@ -26,6 +30,8 @@ def list_inbox_emails(
     """
 
     script = f'''
+    {inbox_name_handler_script()}
+
     tell application "Mail"
         set outputText to "INBOX EMAILS - ALL ACCOUNTS" & return & return
         set totalCount to 0
@@ -105,9 +111,11 @@ def get_unread_count() -> Dict[str, int]:
         Dictionary mapping account names to unread email counts
     """
 
-    script = '''
+    script = f'''
+    {inbox_name_handler_script()}
+
     tell application "Mail"
-        set resultList to {}
+        set resultList to {{}}
         set allAccounts to every account
 
         repeat with anAccount in allAccounts
@@ -215,6 +223,8 @@ def get_recent_emails(
     ''' if include_content else ''
 
     script = f'''
+    {inbox_name_handler_script()}
+
     tell application "Mail"
         set outputText to "RECENT EMAILS - {escaped_account}" & return & return
 
@@ -456,6 +466,8 @@ def get_inbox_overview() -> str:
     """
 
     script = f'''
+    {inbox_name_handler_script()}
+
     tell application "Mail"
         set outputText to "╔══════════════════════════════════════════╗" & return
         set outputText to outputText & "║      EMAIL INBOX OVERVIEW                ║" & return

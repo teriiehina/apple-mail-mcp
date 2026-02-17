@@ -39,7 +39,7 @@ Restart Claude Desktop and grant Mail.app permissions when prompted.
 
 > **Tip:** An `.mcpb` bundle is also available on the [Releases](https://github.com/patrickfreyer/apple-mail-mcp/releases) page for one-click install in Claude Desktop.
 
-## Tools (26)
+## Tools (27)
 
 ### Reading & Search
 | Tool | Description |
@@ -49,6 +49,7 @@ Restart Claude Desktop and grant Mail.app permissions when prompted.
 | `get_email_with_content` | Search emails with full content preview |
 | `get_unread_count` | Unread count per account |
 | `list_accounts` | List all configured Mail accounts |
+| `list_account_inboxes` | Detect inbox mailbox name per account (for configuration) |
 | `get_recent_emails` | Recent emails from a specific account |
 | `get_recent_from_sender` | Recent emails from a sender with time-range filters |
 | `search_emails` | Advanced multi-criteria search (subject, sender, dates, attachments) |
@@ -108,6 +109,34 @@ Set the `USER_EMAIL_PREFERENCES` environment variable to give the assistant cont
 ```
 
 For `.mcpb` installs, configure this in Claude Desktop under **Developer > MCP Servers > Apple Mail MCP**.
+
+### Per-Account Inbox Name (Optional)
+
+By default, the server looks for a mailbox named `INBOX` (with an `Inbox` fallback). If your Apple Mail is configured in a non-English locale, the inbox may have a different name (e.g., `Boîte de réception` in French, `Posteingang` in German).
+
+Use `list_account_inboxes` to discover the exact mailbox names for each account, then configure:
+
+| Variable | Format | Purpose |
+|----------|--------|---------|
+| `INBOX_MAILBOX_NAME` | Plain string | Global default inbox name (default: `INBOX`) |
+| `INBOX_MAILBOX_NAMES` | JSON object | Per-account overrides: `{"account": "inbox_name"}` |
+
+```json
+{
+  "mcpServers": {
+    "apple-mail": {
+      "command": "/path/to/venv/bin/python3",
+      "args": ["/path/to/apple_mail_mcp.py"],
+      "env": {
+        "INBOX_MAILBOX_NAME": "INBOX",
+        "INBOX_MAILBOX_NAMES": "{\"iCloud\": \"Boîte de réception\", \"Travail\": \"Posteingang\"}"
+      }
+    }
+  }
+}
+```
+
+**Resolution order** for each account: `INBOX_MAILBOX_NAMES[account]` > `INBOX_MAILBOX_NAME` > `INBOX` > `Inbox`.
 
 ### Safety Limits
 

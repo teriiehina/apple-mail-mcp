@@ -3,7 +3,7 @@
 import subprocess
 from typing import List, Dict, Any
 
-from apple_mail_mcp.server import USER_PREFERENCES
+from apple_mail_mcp.server import USER_PREFERENCES, INBOX_MAILBOX_NAME, INBOX_MAILBOX_NAMES
 
 
 def inject_preferences(func):
@@ -95,14 +95,91 @@ LOWERCASE_HANDLER = '''
 '''
 
 
-def inbox_mailbox_script(var_name: str = "inboxMailbox", account_var: str = "anAccount") -> str:
-    """Return AppleScript snippet to get inbox mailbox with INBOX/Inbox fallback."""
+def get_inbox_name(account: str) -> str:
+    """Return the configured inbox mailbox name for a given account.
+
+    Resolution order:
+    1. INBOX_MAILBOX_NAMES[account] (per-account override)
+    2. INBOX_MAILBOX_NAME (global default, defaults to "INBOX")
+    """
+    return INBOX_MAILBOX_NAMES.get(account, INBOX_MAILBOX_NAME)
+
+
+def inbox_name_handler_script() -> str:
+    """Return AppleScript handler that resolves inbox name per account.
+
+    Generates an ``on getInboxName(accountName)`` handler embedding the full
+    per-account mapping from INBOX_MAILBOX_NAMES with INBOX_MAILBOX_NAME as
+    the default fallback.  Must be placed *outside* a ``tell`` block.
+    """
+    default = escape_applescript(INBOX_MAILBOX_NAME)
+    lines: list[str] = []
+    first = True
+    for acct, name in INBOX_MAILBOX_NAMES.items():
+        keyword = "if" if first else "else if"
+        lines.append(
+            f'        {keyword} accountName is "{escape_applescript(acct)}" then\n'
+            f'            return "{escape_applescript(name)}"'
+        )
+        first = False
+    if lines:
+        lines.append(f'        else\n            return "{default}"')
+        lines.append('        end if')
+        body = "\n".join(lines)
+    else:
+        body = f'        return "{default}"'
     return f'''
+    on getInboxName(accountName)
+{body}
+    end getInboxName
+'''
+
+
+def inbox_mailbox_script(var_name: str = "inboxMailbox", account_var: str = "anAccount") -> str:
+    """Return AppleScript snippet to resolve inbox mailbox with per-account + fallback.
+
+    The calling script MUST also include ``inbox_name_handler_script()`` in its
+    preamble (outside the ``tell application "Mail"`` block).
+    """
+    return f'''
+                set inboxName to my getInboxName(name of {account_var})
                 try
-                    set {var_name} to mailbox "INBOX" of {account_var}
+                    set {var_name} to mailbox inboxName of {account_var}
                 on error
-                    set {var_name} to mailbox "Inbox" of {account_var}
+                    try
+                        set {var_name} to mailbox "INBOX" of {account_var}
+                    on error
+                        set {var_name} to mailbox "Inbox" of {account_var}
+                    end try
                 end try'''
+
+
+def mailbox_resolve_script(var_name: str, escaped_mailbox: str, account_var: str, inbox_name: str) -> str:
+    """Return AppleScript snippet to resolve a mailbox with inbox-aware fallback.
+
+    For Category A tools where the account (and therefore inbox name) is known
+    at Python time.  Tries the requested mailbox first; if it looks like an
+    inbox reference, falls back through configured name → INBOX → Inbox.
+    """
+    escaped_inbox = escape_applescript(inbox_name)
+    return f'''
+            try
+                set {var_name} to mailbox "{escaped_mailbox}" of {account_var}
+            on error
+                if "{escaped_mailbox}" is "{escaped_inbox}" or "{escaped_mailbox}" is "INBOX" or "{escaped_mailbox}" is "Inbox" then
+                    try
+                        set {var_name} to mailbox "{escaped_inbox}" of {account_var}
+                    on error
+                        try
+                            set {var_name} to mailbox "INBOX" of {account_var}
+                        on error
+                            set {var_name} to mailbox "Inbox" of {account_var}
+                        end try
+                    end try
+                else
+                    error "Mailbox not found: {escaped_mailbox}"
+                end if
+            end try'''
 
 
 def content_preview_script(max_length: int, output_var: str = "outputText") -> str:

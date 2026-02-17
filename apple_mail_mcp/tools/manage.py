@@ -4,7 +4,11 @@ import os
 from typing import Optional
 
 from apple_mail_mcp.server import mcp
-from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, inbox_mailbox_script
+from apple_mail_mcp.core import (
+    inject_preferences, escape_applescript, run_applescript,
+    inbox_mailbox_script, inbox_name_handler_script, get_inbox_name,
+    mailbox_resolve_script,
+)
 
 
 @mcp.tool()
@@ -13,7 +17,7 @@ def move_email(
     account: str,
     subject_keyword: str,
     to_mailbox: str,
-    from_mailbox: str = "INBOX",
+    from_mailbox: Optional[str] = None,
     max_moves: int = 1
 ) -> str:
     """
@@ -23,12 +27,14 @@ def move_email(
         account: Account name (e.g., "Gmail", "Work")
         subject_keyword: Keyword to search for in email subjects
         to_mailbox: Destination mailbox name. For nested mailboxes, use "/" separator (e.g., "Projects/Amplify Impact")
-        from_mailbox: Source mailbox name (default: "INBOX")
+        from_mailbox: Source mailbox name (default: configured inbox name)
         max_moves: Maximum number of emails to move (default: 1, safety limit)
 
     Returns:
         Confirmation message with details of moved emails
     """
+    if from_mailbox is None:
+        from_mailbox = get_inbox_name(account)
 
     # Escape all user inputs for AppleScript
     safe_account = escape_applescript(account)
@@ -56,16 +62,8 @@ def move_email(
 
         try
             set targetAccount to account "{safe_account}"
-            -- Try to get source mailbox (handle both "INBOX"/"Inbox" variations)
-            try
-                set sourceMailbox to mailbox "{safe_from_mailbox}" of targetAccount
-            on error
-                if "{safe_from_mailbox}" is "INBOX" then
-                    set sourceMailbox to mailbox "Inbox" of targetAccount
-                else
-                    error "Source mailbox not found"
-                end if
-            end try
+            -- Try to get source mailbox with inbox fallback
+            {mailbox_resolve_script("sourceMailbox", safe_from_mailbox, "targetAccount", get_inbox_name(account))}
 
             -- Get destination mailbox (handles nested mailboxes)
             set destMailbox to {dest_mailbox_script}
@@ -142,6 +140,8 @@ def save_email_attachment(
     escaped_path = escape_applescript(expanded_path)
 
     script = f'''
+    {inbox_name_handler_script()}
+
     tell application "Mail"
         set outputText to ""
 
@@ -206,7 +206,7 @@ def update_email_status(
     action: str,
     subject_keyword: Optional[str] = None,
     sender: Optional[str] = None,
-    mailbox: str = "INBOX",
+    mailbox: Optional[str] = None,
     max_updates: int = 10
 ) -> str:
     """
@@ -217,12 +217,14 @@ def update_email_status(
         action: Action to perform: "mark_read", "mark_unread", "flag", "unflag"
         subject_keyword: Optional keyword to filter emails by subject
         sender: Optional sender to filter emails by
-        mailbox: Mailbox to search in (default: "INBOX")
+        mailbox: Mailbox to search in (default: configured inbox name)
         max_updates: Maximum number of emails to update (safety limit, default: 10)
 
     Returns:
         Confirmation message with details of updated emails
     """
+    if mailbox is None:
+        mailbox = get_inbox_name(account)
 
     # Escape all user inputs for AppleScript
     safe_account = escape_applescript(account)
@@ -260,16 +262,8 @@ def update_email_status(
 
         try
             set targetAccount to account "{safe_account}"
-            -- Try to get mailbox
-            try
-                set targetMailbox to mailbox "{safe_mailbox}" of targetAccount
-            on error
-                if "{safe_mailbox}" is "INBOX" then
-                    set targetMailbox to mailbox "Inbox" of targetAccount
-                else
-                    error "Mailbox not found: {safe_mailbox}"
-                end if
-            end try
+            -- Try to get mailbox with inbox fallback
+            {mailbox_resolve_script("targetMailbox", safe_mailbox, "targetAccount", get_inbox_name(account))}
 
             set mailboxMessages to every message of targetMailbox
 
@@ -317,7 +311,7 @@ def manage_trash(
     action: str,
     subject_keyword: Optional[str] = None,
     sender: Optional[str] = None,
-    mailbox: str = "INBOX",
+    mailbox: Optional[str] = None,
     max_deletes: int = 5
 ) -> str:
     """
@@ -328,12 +322,14 @@ def manage_trash(
         action: Action to perform: "move_to_trash", "delete_permanent", "empty_trash"
         subject_keyword: Optional keyword to filter emails (not used for empty_trash)
         sender: Optional sender to filter emails (not used for empty_trash)
-        mailbox: Source mailbox (default: "INBOX", not used for empty_trash or delete_permanent)
+        mailbox: Source mailbox (default: configured inbox name, not used for empty_trash or delete_permanent)
         max_deletes: Maximum number of emails to delete (safety limit, default: 5)
 
     Returns:
         Confirmation message with details of deleted emails
     """
+    if mailbox is None:
+        mailbox = get_inbox_name(account)
 
     # Escape all user inputs for AppleScript
     safe_account = escape_applescript(account)
@@ -431,16 +427,8 @@ def manage_trash(
 
             try
                 set targetAccount to account "{safe_account}"
-                -- Get source mailbox
-                try
-                    set sourceMailbox to mailbox "{safe_mailbox}" of targetAccount
-                on error
-                    if "{safe_mailbox}" is "INBOX" then
-                        set sourceMailbox to mailbox "Inbox" of targetAccount
-                    else
-                        error "Mailbox not found: {safe_mailbox}"
-                    end if
-                end try
+                -- Get source mailbox with inbox fallback
+                {mailbox_resolve_script("sourceMailbox", safe_mailbox, "targetAccount", get_inbox_name(account))}
 
                 -- Get trash mailbox
                 set trashMailbox to mailbox "Trash" of targetAccount
